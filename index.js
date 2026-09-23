@@ -10,7 +10,7 @@ const client = new Client({
     ]
 });
 
-const TOKEN = process.env.TOKEN;
+const TOKEN = TOKEN;
 
 let bot = null;
 let movementInterval = null;
