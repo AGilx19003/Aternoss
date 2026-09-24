@@ -18,7 +18,7 @@ const TOKEN = process.env.TOKEN;
 const ai = new GoogleGenAI(); 
 
 // Kendi Discord Kullanıcı ID'nizi buraya yazın! (Başkası komut kullanamaz)
-const OWNER_ID = 'BURAYA_DISCORD_KULLANICI_ID_YAZ'; 
+const OWNER_ID = '1095004764368015451'; 
 
 let bot = null;
 let movementInterval = null;
