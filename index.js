@@ -26,7 +26,6 @@ const client = new Client({
 const TOKEN = process.env.TOKEN;
 const ai = new GoogleGenAI(); 
 
-// Yetkili Kullanıcı ID'leri
 const ALLOWED_USERS = [
     '1095004764368015451',
     '1497885828549054575',
@@ -50,7 +49,6 @@ client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (!ALLOWED_USERS.includes(message.author.id)) return;
 
-    // Discord DM Yapay Zeka Sohbeti
     if (message.channel.type === 1) { 
         if (!bot) return message.reply('⚠️ Bot şu anda oyunda değil! Önce !katil yazın.');
         try {
@@ -148,7 +146,7 @@ client.on('interactionCreate', async (interaction) => {
                 }
             } else {
                 await interaction.reply({
-                    content: '❌ Geçersiz veya süresi dolmuş doğrulama kodu! Lütfen oyundan tekrar `/msg AternosBot hesap eşle` yazarak yeni kod alın.',
+                    content: '❌ Geçersiz veya süresi dolmuş doğrulama kodu! Lütfen oyunda tekrar `/msg AternosBot hesap eşle` yazarak yeni kod alın.',
                     ephemeral: true
                 });
             }
@@ -171,7 +169,7 @@ function connectMinecraft(channel) {
         bot.loadPlugin(pathfinder);
 
         bot.on('spawn', () => {
-            channel.send('✅ Oyuna giriş yaptım efendim! Minecraft içinden `/msg AternosBot <istek>` yazarak beni yönetebilirsiniz.');
+            channel.send('✅ Oyuna giriş yaptım efendim! Minecraft içinden `/msg AternosBot <mesaj>` yazarak beni yönetebilir ve sorular sorabilirsiniz.');
             console.log('Bot oyuna spawn oldu.');
 
             let movingForward = true;
@@ -189,30 +187,39 @@ function connectMinecraft(channel) {
             }, 30000);
         });
 
-        bot.on('whisper', async (username, message) => {
-            console.log(`[Fısıltı] ${username}: ${message}`);
+        async function handleMessage(username, messageText) {
+            if (username === bot.username) return;
+            console.log(`[Minecraft Mesajı] ${username}: ${messageText}`);
             
-            if (message.toLowerCase().trim().includes('hesap eşle') || message.toLowerCase().trim().includes('hesapesle')) {
+            const lowerMsg = messageText.toLowerCase().trim();
+
+            // Hesap Eşleme İsteği
+            if (lowerMsg.includes('hesap eşle') || lowerMsg.includes('hesapesle') || lowerMsg.includes('esle')) {
                 const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
                 pendingCodes.set(verificationCode, {
                     mcUsername: username,
                     createdAt: Date.now()
                 });
 
-                bot.chat(`/msg ${username} [Eşleme] Doğrulama kodunuz: ${verificationCode}. Discord sunucusundaki doğrulama butonuna basarak kodu girin.`);
+                bot.chat(`/msg ${username} [Eşleme] Kodunuz: ${verificationCode}. Discord'daki butona basarak bu kodu girin efendim.`);
                 return;
             }
 
             try {
                 const prompt = `
-Sen Minecraft'ta bir yardımcı botsun. Oyuncu (${username}) sana fısıltı gönderdi: "${message}"
-İsteği analiz et. Görev maden kazmak (ör: elmas, demir, kömür), odun kesmek, eşya tarifi vermek, oyundan çıkmak veya sohbet yanıtı olabilir.
+Sen Minecraft'ta samimi, yardımcı bir kişisel asistansın. Oyuncu (${username}) sana şu mesajı yazdı: "${messageText}"
+Bu mesajı dikkatlice analiz et.
 
-Aşağıdaki JSON formatında yanıt ver:
+1. Eğer oyuncu eşya tarifi (crafting), oyun bilgisi, sorular soruyor ya da sadece sohbet ediyorsa "action" değerini "chat" yap ve "reply" kısmına sorunun kısa, anlaşılır, Türkçe cevabını yaz.
+2. Eğer oyuncu maden kazmanı/toplamanı istiyorsa (kömür, elmas, demir vb.) "action" değerini "mine" yap, "target" değerine bloğun teknik adını yaz (örn: coal_ore, diamond_ore, iron_ore).
+3. Eğer odun kesmeni istiyorsa "action" değerini "wood" yap.
+4. Oyundan çıkmanı istiyorsa "action" değerini "quit" yap.
+
+Sadece geçerli bir JSON objesi döndür (kod bloğu kullanma):
 {
   "action": "mine" | "wood" | "quit" | "chat",
-  "target": "kazılacak blok adı (örn: diamond_ore, iron_ore, coal_ore) veya null",
-  "reply": "Oyuncuya oyun içinde verilecek Türkçe kısa yanıt"
+  "target": "kazılacak blok adı veya null",
+  "reply": "Oyuncuya iletilecek Türkçe yanıt (soru sorulduysa sorunun cevabı)"
 }
 `;
 
@@ -221,7 +228,14 @@ Aşağıdaki JSON formatında yanıt ver:
                     contents: prompt
                 });
 
-                let textResp = response.text.trim().replace(/```json/g, '').replace(/```/g, '').trim();
+                let textResp = response.text.trim();
+                textResp = textResp.replace(/```json/g, '').replace(/```/g, '').trim();
+                const jsonStartIndex = textResp.indexOf('{');
+                const jsonEndIndex = textResp.lastIndexOf('}');
+                if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
+                    textResp = textResp.substring(jsonStartIndex, jsonEndIndex + 1);
+                }
+
                 const data = JSON.parse(textResp);
 
                 if (data.reply) {
@@ -229,7 +243,7 @@ Aşağıdaki JSON formatında yanıt ver:
                 }
 
                 if (data.action === 'mine' && data.target) {
-                    mineOre(data.target);
+                    findAndMineOre(data.target);
                 } else if (data.action === 'wood') {
                     cutSafeTree();
                 } else if (data.action === 'quit') {
@@ -239,8 +253,15 @@ Aşağıdaki JSON formatında yanıt ver:
                 }
 
             } catch (err) {
-                console.error('AI Whisper Error:', err);
-                bot.chat(`/msg ${username} Üzgünüm efendim, isteğinizi anlayamadım.`);
+                console.error('AI Command Error:', err);
+                bot.chat(`/msg ${username} Efendim, sorunuzu işlerken bir hata oluştu.`);
+            }
+        }
+
+        bot.on('whisper', (username, message) => handleMessage(username, message));
+        bot.on('chat', (username, message) => {
+            if (message.toLowerCase().includes('aternosbot') || message.toLowerCase().includes('hesap eşle')) {
+                handleMessage(username, message);
             }
         });
 
@@ -263,6 +284,35 @@ Aşağıdaki JSON formatında yanıt ver:
         console.error(error);
         channel.send(`❌ Hata oluştu: ${error.message}`);
         cleanupBot();
+    }
+}
+
+async function findAndMineOre(oreName) {
+    const mcData = minecraftData(bot.version);
+    
+    const targetBlock = bot.findBlock({
+        matching: block => {
+            return block.name.includes(oreName) || (oreName.includes('coal') && block.name.includes('coal'));
+        },
+        maxDistance: 64
+    });
+
+    if (!targetBlock) {
+        bot.chat(`Etrafta 64 blok yakınımda ${oreName} bulamadım efendim.`);
+        return;
+    }
+
+    bot.chat(`Bulduuum! ${targetBlock.name} madenine doğru ilerliyorum efendim.`);
+    const defaultMove = new Movements(bot, mcData);
+    bot.pathfinder.setMovements(defaultMove);
+    
+    try {
+        await bot.pathfinder.setGoal(new goals.GoalAtBlock(targetBlock.position.x, targetBlock.position.y, targetBlock.position.z));
+        await bot.dig(targetBlock);
+        bot.chat(`Madeni başarıyla kazdım efendim! ⛏️`);
+    } catch (err) {
+        console.log('Maden kazma hatası:', err);
+        bot.chat('Madenin yanına giderken bir engelle karşılaştım.');
     }
 }
 
@@ -291,30 +341,6 @@ async function cutSafeTree() {
         bot.chat('Ağacı kestim efendim!');
     } catch (err) {
         console.log('Ağaç kesme hatası:', err);
-    }
-}
-
-async function mineOre(oreName) {
-    const mcData = minecraftData(bot.version);
-    const targetBlock = bot.findBlock({
-        matching: block => block.name.includes(oreName),
-        maxDistance: 64
-    });
-
-    if (!targetBlock) {
-        bot.chat(`Yakınlarda ${oreName} bulamadım efendim.`);
-        return;
-    }
-
-    const defaultMove = new Movements(bot, mcData);
-    bot.pathfinder.setMovements(defaultMove);
-    await bot.pathfinder.setGoal(new goals.GoalAtBlock(targetBlock.position.x, targetBlock.position.y, targetBlock.position.z));
-
-    try {
-        await bot.dig(targetBlock);
-        bot.chat(`${oreName} madenini kazdım efendim!`);
-    } catch (err) {
-        bot.chat('Maden kazılırken bir sorun oluştu.');
     }
 }
 
