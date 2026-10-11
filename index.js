@@ -10,7 +10,6 @@ const {
     EmbedBuilder 
 } = require('discord.js');
 const mineflayer = require('mineflayer');
-const { mineflayer: mineflayerViewer } = require('prismarine-viewer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const minecraftData = require('minecraft-data');
 const { GoogleGenAI } = require('@google/genai');
@@ -27,6 +26,7 @@ const client = new Client({
 const TOKEN = process.env.TOKEN;
 const ai = new GoogleGenAI(); 
 
+// Yetkili Kullanıcı ID'leri
 const ALLOWED_USERS = [
     '1095004764368015451',
     '1497885828549054575',
@@ -37,13 +37,12 @@ const pendingCodes = new Map();
 const linkedAccounts = new Map();
 
 let bot = null;
-let viewerInstance = null; // Viewer referansını tutmak için
 let movementInterval = null;
 let reconnectTimeout = null;
 let targetChannel = null;
 let isIntentionalQuit = false;
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`Discord botu aktif ve giriş yaptı: ${client.user.tag}`);
 });
 
@@ -51,6 +50,7 @@ client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (!ALLOWED_USERS.includes(message.author.id)) return;
 
+    // Discord DM Yapay Zeka Sohbeti
     if (message.channel.type === 1) { 
         if (!bot) return message.reply('⚠️ Bot şu anda oyunda değil! Önce !katil yazın.');
         try {
@@ -66,7 +66,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (message.content === '!katil') {
-        if (bot) return message.channel.send('⚠️ Bot zaten oyunda ve panel aktif!');
+        if (bot) return message.channel.send('⚠️ Bot zaten oyunda!');
         isIntentionalQuit = false;
         targetChannel = message.channel;
         message.channel.send('⏳ Efendim, sunucuya bağlanıyorum...');
@@ -171,18 +171,8 @@ function connectMinecraft(channel) {
         bot.loadPlugin(pathfinder);
 
         bot.on('spawn', () => {
-            channel.send('✅ Oyuna giriş yaptım efendim! `/msg AternosBot hesap eşle` veya talimat vererek yönetebilirsiniz.');
+            channel.send('✅ Oyuna giriş yaptım efendim! Minecraft içinden `/msg AternosBot <istek>` yazarak beni yönetebilirsiniz.');
             console.log('Bot oyuna spawn oldu.');
-
-            // Port çakışmasını önlemek için viewer sadece ilk açılışta veya kapalıysa başlatılır
-            if (!viewerInstance) {
-                try {
-                    viewerInstance = mineflayerViewer(bot, { port: 3000, firstPerson: true });
-                    console.log('Prismarine viewer aktif edildi.');
-                } catch (e) {
-                    console.log('Viewer başlatılamadı veya port zaten dolu:', e.message);
-                }
-            }
 
             let movingForward = true;
             if (movementInterval) clearInterval(movementInterval);
