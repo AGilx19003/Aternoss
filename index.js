@@ -1,4 +1,14 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle, 
+    EmbedBuilder 
+} = require('discord.js');
 const mineflayer = require('mineflayer');
 const { mineflayer: mineflayerViewer } = require('prismarine-viewer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
@@ -17,8 +27,16 @@ const client = new Client({
 const TOKEN = process.env.TOKEN;
 const ai = new GoogleGenAI(); 
 
-// Kendi Discord Kullanıcı ID'nizi buraya yazın! (Başkası komut kullanamaz)
-const OWNER_ID = '1095004764368015451'; 
+// Yetkili Kullanıcı ID'leri
+const ALLOWED_USERS = [
+    '1095004764368015451',
+    '1497885828549054575',
+    '1474063133902639267'
+];
+
+// Hesap Eşleme Verileri (Gelişmiş projelerde veritabanında saklayabilirsiniz)
+const pendingCodes = new Map(); // Kodu saklar: { code: { mcUsername, createdAt } }
+const linkedAccounts = new Map(); // Eşleşen hesaplar: { discordId: mcUsername }
 
 let bot = null;
 let movementInterval = null;
@@ -30,89 +48,37 @@ client.once('ready', () => {
     console.log(`Discord botu aktif ve giriş yaptı: ${client.user.tag}`);
 });
 
+// --- DISCORD MESAJ & PANELDEN ETKİLEŞİM DİNLEYİCİSİ ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
+    if (!ALLOWED_USERS.includes(message.author.id)) return;
 
-    // GÜVENLİK KONTROLÜ: Mesajı atan kişi siz değilseniz bot tamamen yok sayar!
-    if (message.author.id !== OWNER_ID) return;
-
-    // Yapay Zeka Asistan /msg veya DM (Sadece sizin için çalışır)
-    if (message.content.startsWith('!msg') || message.channel.type === 1) {
-        const query = message.content.startsWith('!msg') ? message.content.slice(4).trim() : message.content;
-        if (!bot) {
-            return message.reply('⚠️ Bot şu anda oyunda değil! Önce !katil yazın.');
-        }
+    // Discord DM Yapay Zeka Sohbeti
+    if (message.channel.type === 1) { 
+        if (!bot) return message.reply('⚠️ Bot şu anda oyunda değil! Önce !katil yazın.');
         try {
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
-                contents: `Sen sadece bu oyuncunun kişisel asistanısın. Oyuncunun sana yazdığı mesaja Türkçe, samimi ve kısa bir asistan gibi yanıt ver: "${query}"`
+                contents: `Sen sadece bu oyuncunun kişisel asistanısın. Türkçe, samimi ve kısa bir asistan gibi yanıt ver: "${message.content}"`
             });
-            const replyText = response.text;
-            message.reply(`🤖 Asistan: ${replyText}`);
-            bot.chat(`[Asistan] ${replyText}`);
+            message.reply(`🤖 Asistan: ${response.text}`);
         } catch (err) {
-            console.error('Yapay Zeka Hatası:', err);
             message.reply('❌ Yapay zeka yanıt üretirken bir hata oluştu.');
         }
         return;
     }
 
+    // Bot Oyuna Katıl / Çık Komutları
     if (message.content === '!katil') {
-        if (bot) {
-            message.channel.send('⚠️ Bot zaten oyunda ve panel aktif!');
-            return;
-        }
-
+        if (bot) return message.channel.send('⚠️ Bot zaten oyunda ve panel aktif!');
         isIntentionalQuit = false;
         targetChannel = message.channel;
-        message.channel.send('⏳ Efendim, sunucuya bağlanıyorum ve kişisel asistanınız aktif ediliyor...');
+        message.channel.send('⏳ Efendim, sunucuya bağlanıyorum...');
         connectMinecraft(message.channel);
     }
 
-    // Koordinata git: !git x y z
-    if (message.content.startsWith('!git')) {
-        if (!bot) return message.channel.send('⚠️ Bot oyunda değil!');
-        const args = message.content.split(' ');
-        if (args.length < 4) return message.channel.send('⚠️ Kullanım: `!git <x> <y> <z>`');
-        
-        const x = parseInt(args[1]);
-        const y = parseInt(args[2]);
-        const z = parseInt(args[3]);
-
-        message.channel.send(`📍 Emredersiniz efendim, (${x}, ${y}, ${z}) koordinatına gidiyorum.`);
-        const mcData = minecraftData(bot.version);
-        const defaultMove = new Movements(bot, mcData);
-        bot.pathfinder.setMovements(defaultMove);
-        bot.pathfinder.setGoal(new goals.GoalBlock(x, y, z));
-    }
-
-    // Güvenli Ağaç Kesme: !agackes
-    if (message.content === '!agackes') {
-        if (!bot) return message.channel.send('⚠️ Bot oyunda değil!');
-        message.channel.send('🪓 Evinize zarar vermeden güvenli bir ağaç arayıp kesiyorum...');
-        cutSafeTree();
-    }
-
-    // Maden Kazma: !maden <maden_adi>
-    if (message.content.startsWith('!maden')) {
-        if (!bot) return message.channel.send('⚠️ Bot oyunda değil!');
-        const args = message.content.split(' ');
-        const oreName = args[1] || 'coal_ore';
-        message.channel.send(`⛏️ İstediğiniz ${oreName} madenini arıyorum...`);
-        mineOre(oreName);
-    }
-
-    // Yatakta uyuma: !uyu
-    if (message.content === '!uyu') {
-        if (!bot) return message.channel.send('⚠️ Bot oyunda değil!');
-        sleepInBed();
-    }
-
     if (message.content === '!cik') {
-        if (!bot) {
-            message.channel.send('⚠️ Bot zaten oyunda değil!');
-            return;
-        }
+        if (!bot) return message.channel.send('⚠️ Bot zaten oyunda değil!');
         isIntentionalQuit = true;
         if (reconnectTimeout) {
             clearTimeout(reconnectTimeout);
@@ -121,8 +87,84 @@ client.on('messageCreate', async (message) => {
         cleanupBot();
         message.channel.send('🔌 Emredersiniz efendim, oyundan çıkış yapıldı.');
     }
+
+    // Doğrulama Paneli Kurma Komutu
+    if (message.content === '!dogrulama-paneli') {
+        const embed = new EmbedBuilder()
+            .setTitle('🎮 Minecraft & Discord Hesap Eşleme')
+            .setDescription('Minecraft hesabınızı Discord ile eşlemek için adımları takip edin:\n\n' +
+                            '1. Oyunda bota fısıltı ile `/msg AternosBot hesap eşle` yazın.\n' +
+                            '2. Botun size gönderdiği **6 haneli doğrulama kodunu** alın.\n' +
+                            '3. Aşağıdaki **"Hesabı Doğrula"** butonuna basarak kodu forma yazın.')
+            .setColor('#2b2d31');
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_verify_account')
+                .setLabel('🔑 Hesabı Doğrula')
+                .setStyle(ButtonStyle.Success)
+        );
+
+        await message.channel.send({ embeds: [embed], components: [row] });
+    }
 });
 
+// --- DISCORD BUTTON & MODAL (FORM) İŞLEYİCİSİ ---
+client.on('interactionCreate', async (interaction) => {
+    if (interaction.isButton()) {
+        if (interaction.customId === 'btn_verify_account') {
+            // Modal (Form) Oluşturma
+            const modal = new ModalBuilder()
+                .setCustomId('modal_verify_code')
+                .setTitle('Minecraft Hesap Eşleme');
+
+            const codeInput = new TextInputBuilder()
+                .setCustomId('input_code')
+                .setLabel('6 Haneli Doğrulama Kodunuz:')
+                .setStyle(TextInputStyle.Short)
+                .setPlaceholder('Örn: 482910')
+                .setMinLength(6)
+                .setMaxLength(6)
+                .setRequired(true);
+
+            const row = new ActionRowBuilder().addComponents(codeInput);
+            modal.addComponents(row);
+
+            await interaction.showModal(modal);
+        }
+    }
+
+    if (interaction.isModalSubmit()) {
+        if (interaction.customId === 'modal_verify_code') {
+            const enteredCode = interaction.fields.getTextInputValue('input_code').trim();
+
+            if (pendingCodes.has(enteredCode)) {
+                const mcData = pendingCodes.get(enteredCode);
+                const mcUsername = mcData.mcUsername;
+
+                // Hesabı eşle
+                linkedAccounts.set(interaction.user.id, mcUsername);
+                pendingCodes.delete(enteredCode);
+
+                await interaction.reply({
+                    content: `✅ Başarılı! **${mcUsername}** isimli Minecraft hesabınız **${interaction.user.tag}** ile başarıyla eşlendi!`,
+                    ephemeral: true
+                });
+
+                if (bot) {
+                    bot.chat(`/msg ${mcUsername} [Asistan] Discord hesabınız (${interaction.user.tag}) ile eşleme başarıyla tamamlandı!`);
+                }
+            } else {
+                await interaction.reply({
+                    content: '❌ Geçersiz veya süresi dolmuş doğrulama kodu! Lütfen oyundan tekrar `/msg AternosBot hesap eşle` yazarak yeni kod alın.',
+                    ephemeral: true
+                });
+            }
+        }
+    }
+});
+
+// --- MINECRAFT BOT BAĞLANTISI VE AI DİNLEYİCİSİ ---
 function connectMinecraft(channel) {
     if (isIntentionalQuit) return;
 
@@ -138,7 +180,7 @@ function connectMinecraft(channel) {
         bot.loadPlugin(pathfinder);
 
         bot.on('spawn', () => {
-            channel.send('✅ Oyuna giriş yaptım efendim! Web paneli http://localhost:3000 adresinde aktif.');
+            channel.send('✅ Oyuna giriş yaptım efendim! `/msg AternosBot hesap eşle` veya talimat vererek yönetebilirsiniz.');
             console.log('Bot oyuna spawn oldu.');
 
             try {
@@ -160,6 +202,64 @@ function connectMinecraft(channel) {
             }, 30000);
         });
 
+        // Minecraft İçi Whisper Dinleyicisi
+        bot.on('whisper', async (username, message) => {
+            console.log(`[Fısıltı] ${username}: ${message}`);
+            
+            // Özel "Hesap Eşle" Kontrolü
+            if (message.toLowerCase().trim().includes('hesap eşle') || message.toLowerCase().trim().includes('hesapesle')) {
+                const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+                pendingCodes.set(verificationCode, {
+                    mcUsername: username,
+                    createdAt: Date.now()
+                });
+
+                bot.chat(`/msg ${username} [Eşleme] Doğrulama kodunuz: ${verificationCode}. Discord sunucusundaki doğrulama butonuna basarak kodu girin.`);
+                return;
+            }
+
+            // Diğer komutlar Gemini AI tarafından işlenir
+            try {
+                const prompt = `
+Sen Minecraft'ta bir yardımcı botsun. Oyuncu (${username}) sana fısıltı gönderdi: "${message}"
+İsteği analiz et. Görev maden kazmak (ör: elmas, demir, kömür), odun kesmek, eşya tarifi vermek, oyundan çıkmak veya sohbet yanıtı olabilir.
+
+Aşağıdaki JSON formatında yanıt ver:
+{
+  "action": "mine" | "wood" | "quit" | "chat",
+  "target": "kazılacak blok adı (örn: diamond_ore, iron_ore, coal_ore) veya null",
+  "reply": "Oyuncuya oyun içinde verilecek Türkçe kısa yanıt"
+}
+`;
+
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: prompt
+                });
+
+                let textResp = response.text.trim().replace(/```json/g, '').replace(/```/g, '').trim();
+                const data = JSON.parse(textResp);
+
+                if (data.reply) {
+                    bot.chat(`/msg ${username} ${data.reply}`);
+                }
+
+                if (data.action === 'mine' && data.target) {
+                    mineOre(data.target);
+                } else if (data.action === 'wood') {
+                    cutSafeTree();
+                } else if (data.action === 'quit') {
+                    isIntentionalQuit = true;
+                    cleanupBot();
+                    if (targetChannel) targetChannel.send('🔌 Oyun içinden gelen komutla oyundan çıkış yapıldı.');
+                }
+
+            } catch (err) {
+                console.error('AI Whisper Error:', err);
+                bot.chat(`/msg ${username} Üzgünüm efendim, isteğinizi anlayamadım.`);
+            }
+        });
+
         bot.on('error', (err) => {
             console.error('Minecraft Bağlantı Hatası:', err);
             channel.send(`❌ Minecraft Bağlantı Hatası: ${err.code || err.message}`);
@@ -167,13 +267,11 @@ function connectMinecraft(channel) {
 
         bot.on('end', (reason) => {
             console.log(`Bot sunucudan düştü. (Sebep: ${reason})`);
-            channel.send(`🔌 Bağlantı koptu (Sebep: ${reason}). Yeniden bağlanıyorum efendim...`);
+            channel.send(`🔌 Bağlantı koptu (Sebep: ${reason}). Yeniden bağlanıyorum...`);
             cleanupBot();
 
             if (!isIntentionalQuit) {
-                reconnectTimeout = setTimeout(() => {
-                    connectMinecraft(channel);
-                }, 5000);
+                reconnectTimeout = setTimeout(() => connectMinecraft(channel), 5000);
             }
         });
 
@@ -233,25 +331,6 @@ async function mineOre(oreName) {
         bot.chat(`${oreName} madenini kazdım efendim!`);
     } catch (err) {
         bot.chat('Maden kazılırken bir sorun oluştu.');
-    }
-}
-
-async function sleepInBed() {
-    const bed = bot.findBlock({
-        matching: block => block.name.includes('bed'),
-        maxDistance: 32
-    });
-
-    if (!bed) {
-        bot.chat('Yakınlarda hiç yatak bulamadım efendim.');
-        return;
-    }
-
-    try {
-        await bot.sleep(bed);
-        bot.chat('Yatağa yattım, huzurlu uykular efendim zzz...');
-    } catch (err) {
-        bot.chat('Şu an uyuyamıyorum.');
     }
 }
 
