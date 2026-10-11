@@ -169,7 +169,7 @@ function connectMinecraft(channel) {
         bot.loadPlugin(pathfinder);
 
         bot.on('spawn', () => {
-            channel.send('✅ Oyuna giriş yaptım efendim! Minecraft içinden `/msg AternosBot <mesaj>` yazarak beni yönetebilir ve sorular sorabilirsiniz.');
+            channel.send('✅ Oyuna giriş yaptım efendim! Minecraft içinden `/msg AternosBot <mesaj>` yazabilirsiniz.');
             console.log('Bot oyuna spawn oldu.');
 
             let movingForward = true;
@@ -187,13 +187,46 @@ function connectMinecraft(channel) {
             }, 30000);
         });
 
+        // Gelen tüm ham sohbet/fısıltı mesajlarını yakalayan ana fonksiyon
+        bot.on('messagestr', (rawMessage) => {
+            console.log(`[Sunucu Ham Mesajı]: ${rawMessage}`);
+
+            // Kendimize attığımız fısıltıları veya botun kendi mesajlarını atla
+            if (rawMessage.startsWith('[AternosBot') || rawMessage.includes('AternosBot ->')) return;
+
+            let sender = null;
+            let text = null;
+
+            // Farklı Fısıltı Formatlarını Ayıklama (EssentialsX, Vanilla, Türkçe vb.)
+            // Örn 1: "Agil whispers to you: Elon Musk kimdir?"
+            // Örn 2: "Agil size fısıldıyor: Elon Musk kimdir?"
+            // Örn 3: "[Agil -> me] Elon Musk kimdir?"
+            if (rawMessage.includes('whispers to you:') || rawMessage.includes('fısıldıyor:') || rawMessage.includes('-> me]') || rawMessage.includes('-> ben]')) {
+                const parts = rawMessage.split(':');
+                if (parts.length >= 2) {
+                    sender = parts[0].split(' ')[0].replace('[', '').replace(']', '').trim();
+                    text = parts.slice(1).join(':').trim();
+                }
+            } 
+            // Normal Chatten Seslenilme (Örn: "Agil: AternosBot Elon Musk kimdir?")
+            else if (rawMessage.toLowerCase().includes('aternosbot')) {
+                const parts = rawMessage.split(':');
+                if (parts.length >= 2) {
+                    sender = parts[0].trim();
+                    text = parts.slice(1).join(':').trim();
+                }
+            }
+
+            if (sender && text) {
+                handleMessage(sender, text);
+            }
+        });
+
         async function handleMessage(username, messageText) {
-            if (username === bot.username) return;
-            console.log(`[Minecraft Mesajı] ${username}: ${messageText}`);
+            console.log(`[İşlenen Mesaj] ${username}: ${messageText}`);
             
             const lowerMsg = messageText.toLowerCase().trim();
 
-            // Hesap Eşleme İsteği
             if (lowerMsg.includes('hesap eşle') || lowerMsg.includes('hesapesle') || lowerMsg.includes('esle')) {
                 const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
                 pendingCodes.set(verificationCode, {
@@ -201,25 +234,24 @@ function connectMinecraft(channel) {
                     createdAt: Date.now()
                 });
 
-                bot.chat(`/msg ${username} [Eşleme] Kodunuz: ${verificationCode}. Discord'daki butona basarak bu kodu girin efendim.`);
+                bot.chat(`/msg ${username} [Eşleme] Kodunuz: ${verificationCode}. Discord'daki butona basarak kodu girin.`);
                 return;
             }
 
             try {
                 const prompt = `
 Sen Minecraft'ta samimi, yardımcı bir kişisel asistansın. Oyuncu (${username}) sana şu mesajı yazdı: "${messageText}"
-Bu mesajı dikkatlice analiz et.
 
-1. Eğer oyuncu eşya tarifi (crafting), oyun bilgisi, sorular soruyor ya da sadece sohbet ediyorsa "action" değerini "chat" yap ve "reply" kısmına sorunun kısa, anlaşılır, Türkçe cevabını yaz.
-2. Eğer oyuncu maden kazmanı/toplamanı istiyorsa (kömür, elmas, demir vb.) "action" değerini "mine" yap, "target" değerine bloğun teknik adını yaz (örn: coal_ore, diamond_ore, iron_ore).
-3. Eğer odun kesmeni istiyorsa "action" değerini "wood" yap.
-4. Oyundan çıkmanı istiyorsa "action" değerini "quit" yap.
+İsteği analiz et:
+1. Sorular, Elon Musk gibi genel kültür bilgileri, eşya tarifleri (crafting) veya sohbet için "action" değerini "chat" yap ve "reply" kısmına sorunun Türkçe yanıtını kısa ve net yaz.
+2. Maden kazma istekleri için "action": "mine", "target": "coal_ore, diamond_ore vb." yap.
+3. Odun kesme istekleri için "action": "wood" yap.
 
-Sadece geçerli bir JSON objesi döndür (kod bloğu kullanma):
+Sadece geçerli bir JSON döndür:
 {
   "action": "mine" | "wood" | "quit" | "chat",
   "target": "kazılacak blok adı veya null",
-  "reply": "Oyuncuya iletilecek Türkçe yanıt (soru sorulduysa sorunun cevabı)"
+  "reply": "Oyuncuya iletilecek Türkçe yanıt (sorulardan bahsettiyse cevabı burada ver)"
 }
 `;
 
@@ -254,16 +286,9 @@ Sadece geçerli bir JSON objesi döndür (kod bloğu kullanma):
 
             } catch (err) {
                 console.error('AI Command Error:', err);
-                bot.chat(`/msg ${username} Efendim, sorunuzu işlerken bir hata oluştu.`);
+                bot.chat(`/msg ${username} Efendim, isteğinizi işlerken bir hata oluştu.`);
             }
         }
-
-        bot.on('whisper', (username, message) => handleMessage(username, message));
-        bot.on('chat', (username, message) => {
-            if (message.toLowerCase().includes('aternosbot') || message.toLowerCase().includes('hesap eşle')) {
-                handleMessage(username, message);
-            }
-        });
 
         bot.on('error', (err) => {
             console.error('Minecraft Bağlantı Hatası:', err);
@@ -291,9 +316,7 @@ async function findAndMineOre(oreName) {
     const mcData = minecraftData(bot.version);
     
     const targetBlock = bot.findBlock({
-        matching: block => {
-            return block.name.includes(oreName) || (oreName.includes('coal') && block.name.includes('coal'));
-        },
+        matching: block => block.name.includes(oreName) || (oreName.includes('coal') && block.name.includes('coal')),
         maxDistance: 64
     });
 
