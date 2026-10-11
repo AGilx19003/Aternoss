@@ -27,18 +27,17 @@ const client = new Client({
 const TOKEN = process.env.TOKEN;
 const ai = new GoogleGenAI(); 
 
-// Yetkili Kullanıcı ID'leri
 const ALLOWED_USERS = [
     '1095004764368015451',
     '1497885828549054575',
     '1474063133902639267'
 ];
 
-// Hesap Eşleme Verileri (Gelişmiş projelerde veritabanında saklayabilirsiniz)
-const pendingCodes = new Map(); // Kodu saklar: { code: { mcUsername, createdAt } }
-const linkedAccounts = new Map(); // Eşleşen hesaplar: { discordId: mcUsername }
+const pendingCodes = new Map();
+const linkedAccounts = new Map();
 
 let bot = null;
+let viewerInstance = null; // Viewer referansını tutmak için
 let movementInterval = null;
 let reconnectTimeout = null;
 let targetChannel = null;
@@ -48,12 +47,10 @@ client.once('ready', () => {
     console.log(`Discord botu aktif ve giriş yaptı: ${client.user.tag}`);
 });
 
-// --- DISCORD MESAJ & PANELDEN ETKİLEŞİM DİNLEYİCİSİ ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (!ALLOWED_USERS.includes(message.author.id)) return;
 
-    // Discord DM Yapay Zeka Sohbeti
     if (message.channel.type === 1) { 
         if (!bot) return message.reply('⚠️ Bot şu anda oyunda değil! Önce !katil yazın.');
         try {
@@ -68,7 +65,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // Bot Oyuna Katıl / Çık Komutları
     if (message.content === '!katil') {
         if (bot) return message.channel.send('⚠️ Bot zaten oyunda ve panel aktif!');
         isIntentionalQuit = false;
@@ -88,7 +84,6 @@ client.on('messageCreate', async (message) => {
         message.channel.send('🔌 Emredersiniz efendim, oyundan çıkış yapıldı.');
     }
 
-    // Doğrulama Paneli Kurma Komutu
     if (message.content === '!dogrulama-paneli') {
         const embed = new EmbedBuilder()
             .setTitle('🎮 Minecraft & Discord Hesap Eşleme')
@@ -109,11 +104,9 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- DISCORD BUTTON & MODAL (FORM) İŞLEYİCİSİ ---
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton()) {
         if (interaction.customId === 'btn_verify_account') {
-            // Modal (Form) Oluşturma
             const modal = new ModalBuilder()
                 .setCustomId('modal_verify_code')
                 .setTitle('Minecraft Hesap Eşleme');
@@ -142,7 +135,6 @@ client.on('interactionCreate', async (interaction) => {
                 const mcData = pendingCodes.get(enteredCode);
                 const mcUsername = mcData.mcUsername;
 
-                // Hesabı eşle
                 linkedAccounts.set(interaction.user.id, mcUsername);
                 pendingCodes.delete(enteredCode);
 
@@ -164,7 +156,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// --- MINECRAFT BOT BAĞLANTISI VE AI DİNLEYİCİSİ ---
 function connectMinecraft(channel) {
     if (isIntentionalQuit) return;
 
@@ -183,9 +174,15 @@ function connectMinecraft(channel) {
             channel.send('✅ Oyuna giriş yaptım efendim! `/msg AternosBot hesap eşle` veya talimat vererek yönetebilirsiniz.');
             console.log('Bot oyuna spawn oldu.');
 
-            try {
-                mineflayerViewer(bot, { port: 3000, firstPerson: true });
-            } catch (e) {}
+            // Port çakışmasını önlemek için viewer sadece ilk açılışta veya kapalıysa başlatılır
+            if (!viewerInstance) {
+                try {
+                    viewerInstance = mineflayerViewer(bot, { port: 3000, firstPerson: true });
+                    console.log('Prismarine viewer aktif edildi.');
+                } catch (e) {
+                    console.log('Viewer başlatılamadı veya port zaten dolu:', e.message);
+                }
+            }
 
             let movingForward = true;
             if (movementInterval) clearInterval(movementInterval);
@@ -202,11 +199,9 @@ function connectMinecraft(channel) {
             }, 30000);
         });
 
-        // Minecraft İçi Whisper Dinleyicisi
         bot.on('whisper', async (username, message) => {
             console.log(`[Fısıltı] ${username}: ${message}`);
             
-            // Özel "Hesap Eşle" Kontrolü
             if (message.toLowerCase().trim().includes('hesap eşle') || message.toLowerCase().trim().includes('hesapesle')) {
                 const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
                 pendingCodes.set(verificationCode, {
@@ -218,7 +213,6 @@ function connectMinecraft(channel) {
                 return;
             }
 
-            // Diğer komutlar Gemini AI tarafından işlenir
             try {
                 const prompt = `
 Sen Minecraft'ta bir yardımcı botsun. Oyuncu (${username}) sana fısıltı gönderdi: "${message}"
